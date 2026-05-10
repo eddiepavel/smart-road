@@ -160,6 +160,19 @@ impl Vehicle {
         let body_color = origin_color(self.origin);
         let window_color = Color { r: 0.9, g: 0.95, b: 1.0, a: 0.85 };
 
+        // White outline for Reserved vehicles — shows AIM grant visually
+        if self.state == VehicleState::Reserved {
+            draw_rectangle_ex(
+                self.pos.x, self.pos.y,
+                CAR_LENGTH + 6.0, CAR_WIDTH + 6.0,
+                DrawRectangleParams {
+                    offset:   vec2(0.5, 0.5),
+                    rotation: self.heading,
+                    color:    WHITE,
+                },
+            );
+        }
+
         // Body
         draw_rectangle_ex(
             self.pos.x, self.pos.y,
