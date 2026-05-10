@@ -1,4 +1,5 @@
 use macroquad::prelude::*;
+use macroquad::rand::gen_range;
 use std::f32::consts::PI;
 use crate::constants::*;
 
@@ -47,9 +48,13 @@ pub struct Vehicle {
     pub waypoints: Vec<Vec2>,
     pub wp_idx:    usize,
 
+    // Physics — randomised per vehicle for varied acceleration/braking behaviour
+    pub accel: f32,  // acceleration rate  (px/s²)
+    pub decel: f32,  // deceleration rate  (px/s²)
+
     // Statistics
-    pub reserve_time: f64,       // set when reservation is granted (AIM "detected")
-    pub entry_time:   f64,       // set when vehicle enters intersection box
+    pub reserve_time: f64,
+    pub entry_time:   f64,
     pub exit_time:    Option<f64>,
     pub max_vel:      f32,
     pub min_vel:      f32,
@@ -64,6 +69,8 @@ impl Vehicle {
             id, origin, route, pos, heading, velocity,
             state: VehicleState::Approaching,
             waypoints, wp_idx: 0,
+            accel: gen_range(100.0_f32, 220.0_f32),
+            decel: gen_range(150.0_f32, 350.0_f32),
             reserve_time: 0.0, entry_time: 0.0, exit_time: None,
             max_vel: velocity, min_vel: velocity,
         }
@@ -156,45 +163,55 @@ impl Vehicle {
         self.state == VehicleState::Done
     }
 
-    /// Draw the vehicle as a rotated rectangle with a direction indicator.
+    /// Draw the vehicle: wheels → body → windshield → headlights, all rotated by heading.
     pub fn draw(&self) {
-        let body_color = origin_color(self.origin);
-        let window_color = Color { r: 0.9, g: 0.95, b: 1.0, a: 0.85 };
+        let body_color  = origin_color(self.origin);
+        let win_color   = Color { r: 0.88, g: 0.94, b: 1.0,  a: 0.90 };
+        let wheel_color = Color { r: 0.18, g: 0.18, b: 0.18, a: 1.0  };
+        let head_color  = Color { r: 1.0,  g: 1.0,  b: 0.65, a: 0.88 };
 
-        // White outline for Reserved vehicles — shows AIM grant visually
+        // Local axes in screen space
+        let fwd = Vec2::new(self.heading.cos(),  self.heading.sin());
+        let rgt = Vec2::new(-self.heading.sin(), self.heading.cos());
+
+        // White outline when reservation is granted
         if self.state == VehicleState::Reserved {
             draw_rectangle_ex(
-                self.pos.x, self.pos.y,
-                CAR_LENGTH + 6.0, CAR_WIDTH + 6.0,
-                DrawRectangleParams {
-                    offset:   vec2(0.5, 0.5),
-                    rotation: self.heading,
-                    color:    WHITE,
-                },
+                self.pos.x, self.pos.y, CAR_LENGTH + 6.0, CAR_WIDTH + 6.0,
+                DrawRectangleParams { offset: vec2(0.5, 0.5), rotation: self.heading, color: WHITE },
+            );
+        }
+
+        // Four wheels (drawn before body so body overlaps their inner edges)
+        for &(fs, rs) in &[(1.0_f32, 1.0_f32), (1.0, -1.0), (-1.0, 1.0), (-1.0, -1.0)] {
+            let wp = self.pos
+                + fwd * (CAR_LENGTH * 0.38 * fs)
+                + rgt * (CAR_WIDTH  * 0.52 * rs);
+            draw_rectangle_ex(wp.x, wp.y, 8.0, 4.0,
+                DrawRectangleParams { offset: vec2(0.5, 0.5), rotation: self.heading, color: wheel_color },
             );
         }
 
         // Body
         draw_rectangle_ex(
-            self.pos.x, self.pos.y,
-            CAR_LENGTH, CAR_WIDTH,
-            DrawRectangleParams {
-                offset:   vec2(0.5, 0.5),
-                rotation: self.heading,
-                color:    body_color,
-            },
+            self.pos.x, self.pos.y, CAR_LENGTH, CAR_WIDTH,
+            DrawRectangleParams { offset: vec2(0.5, 0.5), rotation: self.heading, color: body_color },
         );
 
-        // Front window strip (lighter, on the "nose" of the car)
-        let offset = Vec2::new(self.heading.cos(), self.heading.sin()) * (CAR_LENGTH * 0.22);
+        // Windshield (front third of body, lighter)
+        let win_off = fwd * (CAR_LENGTH * 0.18);
         draw_rectangle_ex(
-            self.pos.x + offset.x, self.pos.y + offset.y,
-            CAR_LENGTH * 0.3, CAR_WIDTH * 0.75,
-            DrawRectangleParams {
-                offset:   vec2(0.5, 0.5),
-                rotation: self.heading,
-                color:    window_color,
-            },
+            self.pos.x + win_off.x, self.pos.y + win_off.y,
+            CAR_LENGTH * 0.28, CAR_WIDTH * 0.70,
+            DrawRectangleParams { offset: vec2(0.5, 0.5), rotation: self.heading, color: win_color },
+        );
+
+        // Headlights — thin yellow strip at nose
+        let nose_off = fwd * (CAR_LENGTH * 0.47);
+        draw_rectangle_ex(
+            self.pos.x + nose_off.x, self.pos.y + nose_off.y,
+            CAR_LENGTH * 0.08, CAR_WIDTH * 0.70,
+            DrawRectangleParams { offset: vec2(0.5, 0.5), rotation: self.heading, color: head_color },
         );
     }
 }

@@ -246,15 +246,22 @@ async fn main() {
             desired_vels[i] = desired_velocity(min_gap);
         }
 
-        // ── AIM request/grant/deny + update ───────────────────────────────────
+        // ── Smooth velocity + AIM request/grant/deny + update ────────────────
         for (i, v) in vehicles.iter_mut().enumerate() {
-            v.velocity = desired_vels[i];
+            // Target from following-distance logic; AIM may override to 0
+            let mut target = desired_vels[i];
 
-            // Stop at entry line and request a reservation each frame until granted
             if v.state == VehicleState::Approaching && v.wp_idx == 0 {
-                let dist_to_entry = (v.waypoints[1] - v.pos).length();
-                if dist_to_entry <= STOP_MARGIN {
-                    v.velocity = 0.0;
+                let dist = (v.waypoints[1] - v.pos).length();
+
+                // Start braking early enough to stop exactly at STOP_MARGIN
+                let stopping_dist = v.velocity * v.velocity / (2.0 * v.decel);
+                if dist <= stopping_dist + STOP_MARGIN {
+                    target = 0.0;
+                }
+
+                // Request reservation once essentially stopped at the entry zone
+                if v.velocity < 2.0 && dist <= STOP_MARGIN + 6.0 {
                     if reservations.request(v, now) {
                         v.state        = VehicleState::Reserved;
                         v.reserve_time = now;
@@ -262,10 +269,16 @@ async fn main() {
                 }
             }
 
+            // Smooth ramp: accelerate or brake toward target
+            if v.velocity < target {
+                v.velocity = (v.velocity + v.accel * dt).min(target);
+            } else if v.velocity > target {
+                v.velocity = (v.velocity - v.decel * dt).max(target);
+            }
+
             let prev_state = v.state;
             v.update(dt, now);
 
-            // Just exited the intersection: free its tiles
             if prev_state == VehicleState::InIntersection
                 && v.state == VehicleState::Exiting
             {
