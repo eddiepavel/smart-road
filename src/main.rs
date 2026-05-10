@@ -137,13 +137,13 @@ fn path_gap(follower: &Vehicle, leader: &Vehicle) -> f32 {
     (leader.pos - follower.pos).length() - CAR_LENGTH
 }
 
-/// Maximum safe speed given a bumper-to-bumper gap and the follower's decel rate.
+/// Maximum safe speed given a bumper-to-bumper gap, decel rate, and speed cap.
 /// Uses the kinematic formula so the car can always stop at SAFE_DIST.
-fn desired_velocity(gap: f32, decel: f32) -> f32 {
+fn desired_velocity(gap: f32, decel: f32, max_speed: f32) -> f32 {
     if gap <= SAFE_DIST {
         0.0
     } else {
-        (2.0 * decel * (gap - SAFE_DIST)).sqrt().min(SPEED_NORMAL)
+        (2.0 * decel * (gap - SAFE_DIST)).sqrt().min(max_speed)
     }
 }
 
@@ -189,10 +189,15 @@ async fn main() {
     let mut show_grid: bool = false;
     let mut stats:       Stats               = Stats::new();
     let mut close_pairs: HashSet<(u32, u32)> = HashSet::new();
+    // Simulation time advances by dt each frame (not wall-clock time).
+    // This keeps reservation time-slots in sync with physics even when the
+    // window is paused, minimised, or the system stutters.
+    let mut sim_time: f64 = 0.0;
 
     loop {
         let dt  = get_frame_time().min(0.05);
-        let now = get_time();
+        sim_time += dt as f64;
+        let now = sim_time;
 
         // ── Arrow keys: spawn one vehicle from the matching arm ────────────────
         // Up    → vehicle enters from South heading north
@@ -247,7 +252,14 @@ async fn main() {
                     min_gap = gap;
                 }
             }
-            desired_vels[i] = desired_velocity(min_gap, vehicles[i].decel);
+            // Exiting vehicles are past the intersection: let them run up to SPEED_FAST,
+            // but still respect the kinematic following distance to any vehicle ahead.
+            let max_spd = if vehicles[i].state == VehicleState::Exiting {
+                SPEED_FAST
+            } else {
+                SPEED_NORMAL
+            };
+            desired_vels[i] = desired_velocity(min_gap, vehicles[i].decel, max_spd);
         }
 
         // ── Smooth velocity + AIM request/grant/deny + update ────────────────
@@ -258,9 +270,11 @@ async fn main() {
             if v.state == VehicleState::Approaching && v.wp_idx == 0 {
                 let dist = (v.waypoints[1] - v.pos).length();
 
-                // Start braking early enough to stop exactly at STOP_MARGIN
+                // Start braking early enough to stop at STOP_MARGIN.
+                // Second condition: once stopped near the line, stay stopped —
+                // prevents oscillation when the car halts slightly past STOP_MARGIN.
                 let stopping_dist = v.velocity * v.velocity / (2.0 * v.decel);
-                if dist <= stopping_dist + STOP_MARGIN {
+                if dist <= stopping_dist + STOP_MARGIN || dist <= STOP_MARGIN + 8.0 {
                     target = 0.0;
                 }
 
@@ -273,17 +287,14 @@ async fn main() {
                 }
             }
 
-            // Exiting vehicles are past the intersection — no conflicts, accelerate freely
-            if v.state == VehicleState::Exiting {
-                target = SPEED_FAST;
-            }
-
             // Smooth ramp: accelerate or brake toward target
             if v.velocity < target {
                 v.velocity = (v.velocity + v.accel * dt).min(target);
             } else if v.velocity > target {
                 v.velocity = (v.velocity - v.decel * dt).max(target);
             }
+            // Hard clamp: velocity must always be in [0, SPEED_FAST]
+            v.velocity = v.velocity.clamp(0.0, SPEED_FAST);
 
             let prev_state = v.state;
             v.update(dt, now);
@@ -333,6 +344,9 @@ async fn main() {
 
         next_frame().await;
     }
+
+    // Flush the ESC key press so the stats loop doesn't exit immediately
+    next_frame().await;
 
     // ── Stats window ───────────────────────────────────────────────────────────
     loop {
