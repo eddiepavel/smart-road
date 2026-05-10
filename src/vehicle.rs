@@ -53,6 +53,7 @@ pub struct Vehicle {
     pub decel: f32,  // deceleration rate  (px/s²)
 
     // Statistics
+    pub distance:     f32,   // total distance travelled (px)
     pub reserve_time: f64,
     pub entry_time:   f64,
     pub exit_time:    Option<f64>,
@@ -71,6 +72,7 @@ impl Vehicle {
             waypoints, wp_idx: 0,
             accel: gen_range(100.0_f32, 220.0_f32),
             decel: gen_range(150.0_f32, 350.0_f32),
+            distance: 0.0,
             reserve_time: 0.0, entry_time: 0.0, exit_time: None,
             max_vel: velocity, min_vel: velocity,
         }
@@ -83,9 +85,10 @@ impl Vehicle {
             return;
         }
 
-        // Track velocity stats
-        self.max_vel = self.max_vel.max(self.velocity);
-        self.min_vel = self.min_vel.min(self.velocity);
+        // Track velocity and distance
+        self.max_vel  = self.max_vel.max(self.velocity);
+        self.min_vel  = self.min_vel.min(self.velocity);
+        self.distance += self.velocity * dt;
 
         let mut remaining = self.velocity * dt;
 

@@ -18,6 +18,7 @@ struct Stats {
     min_vel:         f32,
     max_cross_time:  f32,
     min_cross_time:  f32,
+    max_distance:    f32,
     close_calls:     u32,
 }
 
@@ -29,6 +30,7 @@ impl Stats {
             min_vel: f32::MAX,
             max_cross_time: 0.0,
             min_cross_time: f32::MAX,
+            max_distance: 0.0,
             close_calls: 0,
         }
     }
@@ -38,8 +40,9 @@ impl Stats {
     fn record(&mut self, v: &Vehicle, now: f64) {
         if v.reserve_time <= 0.0 { return; }
         self.vehicles_passed += 1;
-        self.max_vel = self.max_vel.max(v.max_vel);
-        self.min_vel = self.min_vel.min(v.min_vel);
+        self.max_vel      = self.max_vel.max(v.max_vel);
+        self.min_vel      = self.min_vel.min(v.min_vel);
+        self.max_distance = self.max_distance.max(v.distance);
         let cross = (now - v.reserve_time) as f32;
         self.max_cross_time = self.max_cross_time.max(cross);
         self.min_cross_time = self.min_cross_time.min(cross);
@@ -50,7 +53,7 @@ fn draw_stats(stats: &Stats) {
     draw_rectangle(0.0, 0.0, WIN_W, WIN_H, Color { r: 0.0, g: 0.0, b: 0.0, a: 0.72 });
 
     let pw = 440.0_f32;
-    let ph = 310.0_f32;
+    let ph = 346.0_f32;
     let px = (WIN_W - pw) * 0.5;
     let py = (WIN_H - ph) * 0.5;
 
@@ -73,12 +76,13 @@ fn draw_stats(stats: &Stats) {
     let fmt_time = |t: f32| format!("{:.2} s",    t);
     let na       = || "—".to_string();
 
-    let rows: [(&str, String); 6] = [
+    let rows: [(&str, String); 7] = [
         ("Vehicles passed",   format!("{}", stats.vehicles_passed)),
-        ("Max velocity",      if stats.max_vel > 0.0        { fmt_vel(stats.max_vel) }        else { na() }),
-        ("Min velocity",      if stats.min_vel < f32::MAX   { fmt_vel(stats.min_vel) }        else { na() }),
-        ("Max crossing time", if stats.max_cross_time > 0.0 { fmt_time(stats.max_cross_time) } else { na() }),
+        ("Max velocity",      if stats.max_vel > 0.0           { fmt_vel(stats.max_vel) }        else { na() }),
+        ("Min velocity",      if stats.min_vel < f32::MAX      { fmt_vel(stats.min_vel) }        else { na() }),
+        ("Max crossing time", if stats.max_cross_time > 0.0    { fmt_time(stats.max_cross_time) } else { na() }),
         ("Min crossing time", if stats.min_cross_time < f32::MAX { fmt_time(stats.min_cross_time) } else { na() }),
+        ("Max distance",      if stats.max_distance > 0.0      { format!("{:.0} px", stats.max_distance) } else { na() }),
         ("Close calls",       format!("{}", stats.close_calls)),
     ];
 
