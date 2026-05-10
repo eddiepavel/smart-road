@@ -48,10 +48,11 @@ pub struct Vehicle {
     pub wp_idx:    usize,
 
     // Statistics
-    pub entry_time: f64,         // set when vehicle enters intersection box
-    pub exit_time:  Option<f64>, // set when vehicle leaves intersection box
-    pub max_vel:    f32,
-    pub min_vel:    f32,
+    pub reserve_time: f64,       // set when reservation is granted (AIM "detected")
+    pub entry_time:   f64,       // set when vehicle enters intersection box
+    pub exit_time:    Option<f64>,
+    pub max_vel:      f32,
+    pub min_vel:      f32,
 }
 
 impl Vehicle {
@@ -63,7 +64,7 @@ impl Vehicle {
             id, origin, route, pos, heading, velocity,
             state: VehicleState::Approaching,
             waypoints, wp_idx: 0,
-            entry_time: 0.0, exit_time: None,
+            reserve_time: 0.0, entry_time: 0.0, exit_time: None,
             max_vel: velocity, min_vel: velocity,
         }
     }
