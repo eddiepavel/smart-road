@@ -52,7 +52,8 @@ impl ReservationTable {
     /// For each sample point inside the intersection box, record the
     /// (tile_x, tile_y, time_slot) based on the estimated arrival time.
     fn compute_slots(&self, vehicle: &Vehicle, now: f64) -> Vec<TileKey> {
-        let speed = vehicle.velocity.max(1.0);
+        // Use SPEED_NORMAL for stopped vehicles so ETAs are realistic
+        let speed = if vehicle.velocity < 1.0 { SPEED_NORMAL } else { vehicle.velocity };
 
         // Build segment list: vehicle.pos → all remaining waypoints
         let mut positions = Vec::with_capacity(vehicle.waypoints.len());

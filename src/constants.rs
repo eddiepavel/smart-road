@@ -13,6 +13,9 @@ pub const SPEED_FAST:   f32 = 230.0;
 // Minimum gap a vehicle must keep from the one ahead (pixels)
 pub const SAFE_DIST: f32 = 24.0;
 
+// How far before the intersection box edge a vehicle stops to wait for a reservation (pixels)
+pub const STOP_MARGIN: f32 = 40.0;
+
 // Intersection tile grid
 pub const GRID_N:    usize = 10;   // tiles per side
 pub const TILE_PX:   f32   = 24.0; // pixels per tile (ROAD_W / GRID_N)

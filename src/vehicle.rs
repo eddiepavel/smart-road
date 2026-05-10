@@ -126,6 +126,13 @@ impl Vehicle {
         match self.state {
             VehicleState::Approaching => {
                 if in_box {
+                    // Fallback: shouldn't normally fire; stop logic in main prevents this
+                    self.state      = VehicleState::InIntersection;
+                    self.entry_time = now;
+                }
+            }
+            VehicleState::Reserved => {
+                if in_box {
                     self.state      = VehicleState::InIntersection;
                     self.entry_time = now;
                 }
