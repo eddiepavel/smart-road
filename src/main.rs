@@ -158,18 +158,24 @@ async fn main() {
             desired_vels[i] = desired_velocity(min_gap);
         }
 
-        // ── Update + reservation lifecycle ────────────────────────────────────
+        // ── AIM request/grant/deny + update ───────────────────────────────────
         for (i, v) in vehicles.iter_mut().enumerate() {
             v.velocity = desired_vels[i];
+
+            // Stop at entry line and request a reservation each frame until granted
+            if v.state == VehicleState::Approaching && v.wp_idx == 0 {
+                let dist_to_entry = (v.waypoints[1] - v.pos).length();
+                if dist_to_entry <= STOP_MARGIN {
+                    v.velocity = 0.0;
+                    if reservations.request(v, now) {
+                        v.state = VehicleState::Reserved;
+                    }
+                }
+            }
+
             let prev_state = v.state;
             v.update(dt, now);
 
-            // Just entered the intersection: make a reservation
-            if prev_state != VehicleState::InIntersection
-                && v.state == VehicleState::InIntersection
-            {
-                reservations.request(v, now);
-            }
             // Just exited the intersection: free its tiles
             if prev_state == VehicleState::InIntersection
                 && v.state == VehicleState::Exiting
