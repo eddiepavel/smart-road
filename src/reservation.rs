@@ -43,18 +43,33 @@ impl ReservationTable {
     /// Remove time slots that have already passed.
     pub fn cleanup(&mut self, now: f64) {
         let current_slot = (now as f32 / TIME_SLOT) as u32;
-        self.table.retain(|&(_, _, ts), _| ts + 4 >= current_slot);
+        self.table.retain(|&(_, _, ts), _| ts + 8 >= current_slot);
     }
 
     // ── Tile-path computation ─────────────────────────────────────────────────
 
     /// Walk the vehicle's remaining path, sampling every TILE_PX/2 px.
-    /// For each sample point inside the intersection box, record the
-    /// (tile_x, tile_y, time_slot) based on the estimated arrival time.
+    /// ETAs use kinematic equations (acceleration from rest) so that the booked
+    /// time slots match the vehicle's actual motion after the reservation is granted.
     fn compute_slots(&self, vehicle: &Vehicle, now: f64) -> Vec<TileKey> {
-        // Vehicles only request from the stop line (velocity ≈ 0); use SPEED_NORMAL
-        // for accurate ETAs, since that is the speed at which they will cross.
-        let speed = SPEED_NORMAL;
+        let accel  = vehicle.accel;
+        let v_max  = SPEED_NORMAL;
+        // Distance the vehicle needs to accelerate from rest to v_max
+        let d_full = v_max * v_max / (2.0 * accel);
+
+        // Time to travel distance d starting from rest (v = 0)
+        let time_to = |d: f32| -> f32 {
+            if d <= d_full {
+                (2.0 * d / accel).sqrt()
+            } else {
+                v_max / accel + (d - d_full) / v_max
+            }
+        };
+
+        // Instantaneous speed at distance d from rest, clamped to v_max
+        let speed_at = |d: f32| -> f32 {
+            (2.0 * accel * d).sqrt().min(v_max).max(1.0)
+        };
 
         // Build segment list: vehicle.pos → all remaining waypoints
         let mut positions = Vec::with_capacity(vehicle.waypoints.len());
@@ -76,16 +91,16 @@ impl ReservationTable {
             let steps = ((seg_len / (TILE_PX * 0.5)).ceil() as usize).max(1);
 
             for s in 0..=steps {
-                let t      = s as f32 / steps as f32;
-                let p      = a.lerp(b, t);
-                let dist   = cum_dist + t * seg_len;
+                let t    = s as f32 / steps as f32;
+                let p    = a.lerp(b, t);
+                let dist = cum_dist + t * seg_len;
 
                 // Only care about points inside the intersection box
                 if p.x < INTER_L || p.x > INTER_R || p.y < INTER_T || p.y > INTER_B {
                     continue;
                 }
 
-                let eta = now as f32 + dist / speed;
+                let eta = now as f32 + time_to(dist);
                 let ts  = (eta / TIME_SLOT) as u32;
 
                 let tx = ((p.x - INTER_L) / TILE_PX) as i32;
@@ -95,8 +110,12 @@ impl ReservationTable {
                     continue;
                 }
 
-                // Reserve the current slot plus one ahead as a timing buffer
-                for offset in 0u32..2 {
+                // Dwell: how many slots does the vehicle spend in this tile?
+                // Depends on actual speed at this point; add 2 slots of safety margin.
+                let v_here = speed_at(dist);
+                let dwell  = ((TILE_PX / v_here / TIME_SLOT).ceil() as u32 + 2).max(3);
+
+                for offset in 0..dwell {
                     let key = (tx as u8, ty as u8, ts + offset);
                     if seen.insert(key) {
                         result.push(key);

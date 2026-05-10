@@ -133,13 +133,13 @@ fn path_gap(follower: &Vehicle, leader: &Vehicle) -> f32 {
     (leader.pos - follower.pos).length() - CAR_LENGTH
 }
 
-/// Maps a bumper-to-bumper gap to a target speed.
-/// At gap >= SAFE_DIST → full speed; at gap = 0 → stopped.
-fn desired_velocity(gap: f32) -> f32 {
-    if gap >= SAFE_DIST {
-        SPEED_NORMAL
+/// Maximum safe speed given a bumper-to-bumper gap and the follower's decel rate.
+/// Uses the kinematic formula so the car can always stop at SAFE_DIST.
+fn desired_velocity(gap: f32, decel: f32) -> f32 {
+    if gap <= SAFE_DIST {
+        0.0
     } else {
-        (SPEED_NORMAL * gap / SAFE_DIST).max(0.0)
+        (2.0 * decel * (gap - SAFE_DIST)).sqrt().min(SPEED_NORMAL)
     }
 }
 
@@ -169,7 +169,7 @@ fn try_spawn(vehicles: &mut Vec<Vehicle>, id: &mut u32, origin: Direction, route
             && (v.pos - pos).length() < MIN_SPAWN_GAP
     });
     if !blocked {
-        vehicles.push(Vehicle::new(*id, origin, route, SPEED_NORMAL));
+        vehicles.push(Vehicle::new(*id, origin, route, SPEED_SLOW));
         *id += 1;
     }
 }
@@ -243,7 +243,7 @@ async fn main() {
                     min_gap = gap;
                 }
             }
-            desired_vels[i] = desired_velocity(min_gap);
+            desired_vels[i] = desired_velocity(min_gap, vehicles[i].decel);
         }
 
         // ── Smooth velocity + AIM request/grant/deny + update ────────────────
@@ -267,6 +267,11 @@ async fn main() {
                         v.reserve_time = now;
                     }
                 }
+            }
+
+            // Exiting vehicles are past the intersection — no conflicts, accelerate freely
+            if v.state == VehicleState::Exiting {
+                target = SPEED_FAST;
             }
 
             // Smooth ramp: accelerate or brake toward target
