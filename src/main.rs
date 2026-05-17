@@ -19,6 +19,7 @@ struct Stats {
     max_cross_time:  f32,
     min_cross_time:  f32,
     max_distance:    f32,
+    min_distance:    f32,
     close_calls:     u32,
 }
 
@@ -31,6 +32,7 @@ impl Stats {
             max_cross_time: 0.0,
             min_cross_time: f32::MAX,
             max_distance: 0.0,
+            min_distance: f32::MAX,
             close_calls: 0,
         }
     }
@@ -43,6 +45,7 @@ impl Stats {
         self.max_vel      = self.max_vel.max(v.max_vel);
         self.min_vel      = self.min_vel.min(v.min_vel);
         self.max_distance = self.max_distance.max(v.distance);
+        self.min_distance = self.min_distance.min(v.distance);
         let cross = (now - v.reserve_time) as f32;
         self.max_cross_time = self.max_cross_time.max(cross);
         self.min_cross_time = self.min_cross_time.min(cross);
@@ -53,7 +56,7 @@ fn draw_stats(stats: &Stats) {
     draw_rectangle(0.0, 0.0, WIN_W, WIN_H, Color { r: 0.0, g: 0.0, b: 0.0, a: 0.72 });
 
     let pw = 440.0_f32;
-    let ph = 346.0_f32;
+    let ph = 390.0_f32;
     let px = (WIN_W - pw) * 0.5;
     let py = (WIN_H - ph) * 0.5;
 
@@ -76,13 +79,14 @@ fn draw_stats(stats: &Stats) {
     let fmt_time = |t: f32| format!("{:.2} s",    t);
     let na       = || "—".to_string();
 
-    let rows: [(&str, String); 7] = [
+    let rows: [(&str, String); 8] = [
         ("Vehicles passed",   format!("{}", stats.vehicles_passed)),
         ("Max velocity",      if stats.max_vel > 0.0           { fmt_vel(stats.max_vel) }        else { na() }),
         ("Min velocity",      if stats.min_vel < f32::MAX      { fmt_vel(stats.min_vel) }        else { na() }),
         ("Max crossing time", if stats.max_cross_time > 0.0    { fmt_time(stats.max_cross_time) } else { na() }),
         ("Min crossing time", if stats.min_cross_time < f32::MAX { fmt_time(stats.min_cross_time) } else { na() }),
-        ("Max distance",      if stats.max_distance > 0.0      { format!("{:.0} px", stats.max_distance) } else { na() }),
+        ("Max travel distance", if stats.max_distance > 0.0      { format!("{:.0} px", stats.max_distance) } else { na() }),
+        ("Min travel distance", if stats.min_distance < f32::MAX { format!("{:.0} px", stats.min_distance) } else { na() }),
         ("Close calls",       format!("{}", stats.close_calls)),
     ];
 
@@ -181,6 +185,12 @@ fn try_spawn(vehicles: &mut Vec<Vehicle>, id: &mut u32, origin: Direction, route
 #[macroquad::main(window_conf)]
 async fn main() {
     let grass = Color { r: 0.13, g: 0.40, b: 0.13, a: 1.0 };
+    // Try to load a car sprite from `assets/car.png`. If missing, we'll
+    // generate a neutral white car sprite into a render target and tint it.
+    let car_tex = match macroquad::texture::load_texture("assets/car.png").await {
+        Ok(t) => { let mut tt = t; tt.set_filter(macroquad::texture::FilterMode::Nearest); Some(tt) },
+        Err(_)    => None,
+    };
 
     let mut vehicles:     Vec<Vehicle>     = Vec::new();
     let mut reservations: ReservationTable = ReservationTable::new();
@@ -188,6 +198,8 @@ async fn main() {
     let mut r_timer:   f32  = R_INTERVAL;
     let mut show_grid: bool = false;
     let mut stats:       Stats               = Stats::new();
+    // Track pairs that are currently in a close-call state so we only count
+    // the transition into the close zone once per encounter.
     let mut close_pairs: HashSet<(u32, u32)> = HashSet::new();
     // Simulation time advances by dt each frame (not wall-clock time).
     // This keeps reservation time-slots in sync with physics even when the
@@ -306,22 +318,57 @@ async fn main() {
             }
         }
 
-        // ── Close call detection ──────────────────────────────────────────
+        // ── Close call detection (edge-triggered + approach check) ─────────
         let cc_dist = CAR_LENGTH + SAFE_DIST;
-        let mut new_close: HashSet<(u32, u32)> = HashSet::new();
+        let mut current_close: HashSet<(u32, u32)> = HashSet::new();
+
         for i in 0..vehicles.len() {
             for j in (i + 1)..vehicles.len() {
-                if (vehicles[i].pos - vehicles[j].pos).length() < cc_dist {
-                    let pair = (vehicles[i].id.min(vehicles[j].id),
-                                vehicles[i].id.max(vehicles[j].id));
-                    new_close.insert(pair);
-                    if !close_pairs.contains(&pair) {
-                        stats.close_calls += 1;
-                    }
+                let vi = &vehicles[i];
+                let vj = &vehicles[j];
+
+                // Skip vehicles that share the exact same path (same origin+route)
+                if vi.origin == vj.origin && vi.route == vj.route {
+                    continue;
+                }
+
+                // Only consider pairs that are in or near the intersection area.
+                let in_box_i = vi.pos.x >= INTER_L && vi.pos.x <= INTER_R
+                            && vi.pos.y >= INTER_T && vi.pos.y <= INTER_B;
+                let in_box_j = vj.pos.x >= INTER_L && vj.pos.x <= INTER_R
+                            && vj.pos.y >= INTER_T && vj.pos.y <= INTER_B;
+                if !(in_box_i || in_box_j
+                    || vi.state == VehicleState::InIntersection
+                    || vj.state == VehicleState::InIntersection)
+                {
+                    continue;
+                }
+
+                let dist = (vi.pos - vj.pos).length();
+                if dist >= cc_dist { continue; }
+
+                // Approach check: are they closing in on each other?
+                let vel_i = Vec2::new(vi.heading.cos(), vi.heading.sin()) * vi.velocity;
+                let vel_j = Vec2::new(vj.heading.cos(), vj.heading.sin()) * vj.velocity;
+                let rel_pos = vj.pos - vi.pos;
+                let rel_vel = vel_j - vel_i;
+                // dot < 0 => distance decreasing
+                if rel_pos.dot(rel_vel) >= 0.0 {
+                    continue;
+                }
+
+                let pair = (vi.id.min(vj.id), vi.id.max(vj.id));
+                current_close.insert(pair);
+
+                // Count only the moment the pair enters the close-call state.
+                if !close_pairs.contains(&pair) {
+                    stats.close_calls += 1;
                 }
             }
         }
-        close_pairs = new_close;
+
+        // Keep only pairs that are still close this frame.
+        close_pairs = current_close;
 
         // ── Stats + cleanup for finished vehicles ─────────────────────────
         for v in vehicles.iter().filter(|v| v.is_done()) {
@@ -339,7 +386,7 @@ async fn main() {
             reservations.draw_debug(now);
         }
         for v in &vehicles {
-            v.draw();
+            v.draw(car_tex.as_ref());
         }
 
         next_frame().await;
@@ -353,7 +400,7 @@ async fn main() {
         clear_background(grass);
         intersection::draw();
         for v in &vehicles {
-            v.draw();
+            v.draw(car_tex.as_ref());
         }
         draw_stats(&stats);
         if is_key_pressed(KeyCode::Escape) || is_key_pressed(KeyCode::Enter) {

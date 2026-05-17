@@ -167,7 +167,28 @@ impl Vehicle {
     }
 
     /// Draw the vehicle: wheels → body → windshield → headlights, all rotated by heading.
-    pub fn draw(&self) {
+    /// If `tex` is `Some`, render the sprite; otherwise fall back to primitives.
+    pub fn draw(&self, tex: Option<&Texture2D>) {
+        if let Some(tex) = tex {
+            // Draw highlight for reservation
+            if self.state == VehicleState::Reserved {
+                draw_rectangle_ex(
+                    self.pos.x, self.pos.y, CAR_LENGTH + 6.0, CAR_WIDTH + 6.0,
+                    DrawRectangleParams { offset: vec2(0.5, 0.5), rotation: self.heading, color: WHITE },
+                );
+            }
+
+            // Draw the texture centered at `self.pos` and scaled to CAR_LENGTH x CAR_WIDTH.
+            let w = CAR_LENGTH;
+            let h = CAR_WIDTH;
+            let x = self.pos.x - w * 0.5;
+            let y = self.pos.y - h * 0.5;
+            draw_texture_ex(tex, x, y, origin_color(self.origin),
+                DrawTextureParams { dest_size: Some(vec2(w, h)), rotation: self.heading, ..Default::default() });
+            return;
+        }
+
+        // --- Fallback primitive rendering ---
         let body_color  = origin_color(self.origin);
         let win_color   = Color { r: 0.88, g: 0.94, b: 1.0,  a: 0.90 };
         let wheel_color = Color { r: 0.18, g: 0.18, b: 0.18, a: 1.0  };
